@@ -8,7 +8,7 @@ use std::{
     hash::{self, Hasher},
     path::Path,
     ptr,
-    rc::Rc,
+    sync::Arc,
 };
 
 pub use array::*;
@@ -45,8 +45,8 @@ impl Drop for Handle {
 /// QPdf is a data structure which represents a PDF file
 #[derive(Clone)]
 pub struct QPdf {
-    inner: Rc<Handle>,
-    foreign: Rc<RefCell<HashSet<QPdf>>>,
+    inner: Arc<Handle>,
+    foreign: Arc<RefCell<HashSet<QPdf>>>,
 }
 
 impl hash::Hash for QPdf {
@@ -136,8 +136,8 @@ impl QPdf {
             qpdf_sys::qpdf_set_suppress_warnings(inner, true.into());
             qpdf_sys::qpdf_silence_errors(inner);
             QPdf {
-                inner: Rc::new(Handle { handle: inner, buffer }),
-                foreign: Rc::new(RefCell::new(HashSet::new())),
+                inner: Arc::new(Handle { handle: inner, buffer }),
+                foreign: Arc::new(RefCell::new(HashSet::new())),
             }
         }
     }
