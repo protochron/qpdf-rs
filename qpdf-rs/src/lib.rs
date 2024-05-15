@@ -1,14 +1,13 @@
 #![doc = include_str!("../README.md")]
 
 use std::{
-    cell::RefCell,
     collections::HashSet,
     ffi::{CStr, CString},
     fmt,
     hash::{self, Hasher},
     path::Path,
     ptr,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 pub use array::*;
@@ -28,6 +27,12 @@ pub mod stream;
 pub mod writer;
 
 pub type Result<T> = std::result::Result<T, QPdfError>;
+#[derive(Clone)]
+pub struct QPdfAccessor {
+    inner: Arc<Mutex<HashSet<QPdf>>>,
+}
+unsafe impl Send for QPdfAccessor {}
+unsafe impl Sync for QPdfAccessor {}
 
 struct Handle {
     handle: qpdf_sys::qpdf_data,
@@ -46,7 +51,7 @@ impl Drop for Handle {
 #[derive(Clone)]
 pub struct QPdf {
     inner: Arc<Handle>,
-    foreign: Arc<RefCell<HashSet<QPdf>>>,
+    foreign: QPdfAccessor,
 }
 
 impl hash::Hash for QPdf {
@@ -137,7 +142,9 @@ impl QPdf {
             qpdf_sys::qpdf_silence_errors(inner);
             QPdf {
                 inner: Arc::new(Handle { handle: inner, buffer }),
-                foreign: Arc::new(RefCell::new(HashSet::new())),
+                foreign: QPdfAccessor {
+                    inner: Arc::new(Mutex::new(HashSet::new())),
+                },
             }
         }
     }
@@ -254,7 +261,11 @@ impl QPdf {
     /// Add a page object to PDF. The `first` parameter indicates whether to prepend or append it.
     pub fn add_page<T: AsRef<QPdfObject>>(self: &QPdf, new_page: T, first: bool) -> Result<()> {
         if new_page.as_ref().owner.inner() != self.inner() {
-            self.foreign.borrow_mut().insert(new_page.as_ref().owner.clone());
+            self.foreign
+                .inner
+                .lock()
+                .unwrap()
+                .insert(new_page.as_ref().owner.clone());
         }
         self.wrap_ffi_call(|| unsafe {
             qpdf_sys::qpdf_add_page(
@@ -273,7 +284,11 @@ impl QPdf {
         R: AsRef<QPdfObject>,
     {
         if new_page.as_ref().owner.inner() != self.inner() {
-            self.foreign.borrow_mut().insert(new_page.as_ref().owner.clone());
+            self.foreign
+                .inner
+                .lock()
+                .unwrap()
+                .insert(new_page.as_ref().owner.clone());
         }
         self.wrap_ffi_call(|| unsafe {
             qpdf_sys::qpdf_add_page_at(
@@ -314,7 +329,7 @@ impl QPdf {
 
     /// Remove page object from the PDF.
     pub fn remove_page<P: AsRef<QPdfObject>>(self: &QPdf, page: P) -> Result<()> {
-        self.foreign.borrow_mut().remove(&page.as_ref().owner);
+        self.foreign.inner.lock().unwrap().remove(&page.as_ref().owner);
         self.wrap_ffi_call(|| unsafe { qpdf_sys::qpdf_remove_page(self.inner(), page.as_ref().inner) })
     }
 
@@ -508,7 +523,11 @@ impl QPdf {
         let oh = unsafe {
             qpdf_sys::qpdf_oh_copy_foreign_object(self.inner(), foreign.as_ref().owner.inner(), foreign.as_ref().inner)
         };
-        self.foreign.borrow_mut().insert(foreign.as_ref().owner.clone());
+        self.foreign
+            .inner
+            .lock()
+            .unwrap()
+            .insert(foreign.as_ref().owner.clone());
         QPdfObject::new(self.clone(), oh)
     }
 
